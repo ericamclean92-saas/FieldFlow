@@ -32,9 +32,10 @@ entry_mode = st.radio("입력 방식 선택", ["Manual Entry (수동)", "Import 
 # [기능 2] 고객사 엑셀 매핑 (Universal Import)
 # ==========================================
 if entry_mode == "Import Custom Excel (고객사 양식 매핑)":
-    st.info("💡 고객사마다 다른 엑셀 양식을 업로드하고, 컬럼을 연결(Mapping)해주세요.")
+    st.info("💡 고객사마다 다른 엑셀 양식(.xlsx, .xlsm, .csv)을 업로드하고, 컬럼을 연결(Mapping)해주세요.")
     
-    uploaded_file = st.file_uploader("고객사 엑셀 파일 업로드", type=["xlsx", "xls", "csv"])
+    # [수정됨] xlsm 확장자 추가!
+    uploaded_file = st.file_uploader("고객사 엑셀 파일 업로드", type=["xlsx", "xlsm", "xls", "csv"])
     
     if uploaded_file:
         try:
@@ -42,7 +43,8 @@ if entry_mode == "Import Custom Excel (고객사 양식 매핑)":
             if uploaded_file.name.endswith('.csv'):
                 raw_df = pd.read_csv(uploaded_file)
             else:
-                raw_df = pd.read_excel(uploaded_file)
+                # engine='openpyxl'은 xlsm도 잘 읽습니다.
+                raw_df = pd.read_excel(uploaded_file, engine='openpyxl')
             
             st.write("---")
             col_set1, col_set2 = st.columns([1, 2])
@@ -56,7 +58,7 @@ if entry_mode == "Import Custom Excel (고객사 양식 매핑)":
                 if uploaded_file.name.endswith('.csv'):
                     df = pd.read_csv(uploaded_file, header=header_row_idx)
                 else:
-                    df = pd.read_excel(uploaded_file, header=header_row_idx)
+                    df = pd.read_excel(uploaded_file, header=header_row_idx, engine='openpyxl')
                 
                 # 데이터 미리보기
                 st.caption("엑셀 데이터 미리보기 (상위 3행):")
@@ -92,7 +94,12 @@ if entry_mode == "Import Custom Excel (고객사 양식 매핑)":
                 if map_name != "(선택 안 함)":
                     new_labor = pd.DataFrame()
                     new_labor["Crew Name"] = df[map_name]
-                    new_labor["Trade"] = df[map_trade] if map_trade != "(선택 안 함)" else "Laborer" # 기본값
+                    # Trade가 없으면 Laborer로 기본 설정
+                    if map_trade != "(선택 안 함)":
+                        new_labor["Trade"] = df[map_trade]
+                    else:
+                        new_labor["Trade"] = "Laborer"
+                        
                     new_labor["Reg Hrs"] = pd.to_numeric(df[map_reg], errors='coerce').fillna(0) if map_reg != "(선택 안 함)" else 0
                     new_labor["OT Hrs"] = pd.to_numeric(df[map_ot], errors='coerce').fillna(0) if map_ot != "(선택 안 함)" else 0
                     new_labor["Travel Hrs"] = 0
