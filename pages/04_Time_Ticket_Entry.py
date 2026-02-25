@@ -7,7 +7,7 @@ import io
 st.set_page_config(page_title="Time Ticket Entry", layout="wide")
 st.title("⏱️ Time Ticket Entry")
 
-# --- 기본 데이터 로딩 ---
+# --- Load Basic Data ---
 def get_active_jobs():
     try:
         res = supabase.table("master_project").select("*").eq("status", "Active").execute()
@@ -24,7 +24,7 @@ jobs_data = get_active_jobs()
 job_list = [j['job_number'] for j in jobs_data]
 saved_maps = get_saved_maps()
 
-# --- 세션 초기화 ---
+# --- Initialize Session State ---
 if "labour_df" not in st.session_state:
     st.session_state.labour_df = pd.DataFrame(columns=["Crew Name", "Trade", "Reg Hrs", "OT Hrs", "Travel Hrs", "Subsistence"])
 if "equip_df" not in st.session_state:
@@ -33,166 +33,186 @@ if "misc_df" not in st.session_state:
     st.session_state.misc_df = pd.DataFrame(columns=["Description", "Qty", "Rate", "Total"])
 
 # ==========================================
-# [심플해진 상단] 입력 방식 선택
+# Entry Mode Selection
 # ==========================================
-entry_mode = st.radio("작업 방식", ["수동 입력 (Manual)", "엑셀 불러오기 (Import)"], horizontal=True)
+entry_mode = st.radio("Entry Mode", ["Manual Entry", "Import from Excel"], horizontal=True)
 
-if entry_mode == "엑셀 불러오기 (Import)":
-    # 1. 설정 선택
+# 1. Header Section (Moved up to be selected BEFORE import)
+st.divider()
+st.subheader("1️⃣ Ticket Details")
+c1, c2, c3, c4 = st.columns(4)
+with c1: 
+    # Capture the selected Job Number to filter data
+    selected_job_num = st.selectbox("Job #", job_list)
+with c2: ticket_date = st.date_input("Ticket Date", datetime.now())
+with c3: ticket_number = st.text_input("Ticket #", placeholder="FT-260225-01")
+with c4: billing_type = st.selectbox("Billing", ["T&M", "Lump Sum", "Unit Price"])
+
+cc1, cc2, cc3 = st.columns(3)
+with cc1: afe = st.text_input("AFE #")
+with cc2: po = st.text_input("PO #")
+with cc3: desc = st.text_input("Description")
+
+
+# ==========================================
+# Import Logic
+# ==========================================
+if entry_mode == "Import from Excel":
+    st.divider()
+    st.subheader("📂 Excel Import")
+    
+    # Select Map Settings
     map_options = {m['map_name']: m for m in saved_maps}
     
     if not map_options:
-        st.warning("⚠️ 등록된 엑셀 양식이 없습니다. 'Settings' 메뉴에서 양식을 먼저 등록해주세요.")
+        st.warning("⚠️ No import templates found. Please configure them in 'Settings'.")
     else:
-        st.info("💡 미리 설정된 양식을 선택하고 엑셀 파일을 업로드하세요.")
-        
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            selected_profile_name = st.selectbox("📂 양식 선택 (Profile)", list(map_options.keys()))
+        c_imp1, c_imp2 = st.columns([1, 2])
+        with c_imp1:
+            selected_profile_name = st.selectbox("Select Profile", list(map_options.keys()))
             selected_map = map_options[selected_profile_name]
         
-        with c2:
-            uploaded_file = st.file_uploader("엑셀 파일 업로드", type=["xlsx", "xlsm", "xls", "csv"], label_visibility="collapsed")
+        with c_imp2:
+            uploaded_file = st.file_uploader("Upload Excel File", type=["xlsx", "xlsm", "xls", "csv"], label_visibility="collapsed")
 
-        if uploaded_file and st.button("🚀 데이터 적용하기 (Process)", type="primary"):
+        if uploaded_file and st.button("🚀 Process & Apply Data", type="primary"):
             try:
-                # 1. 파일 읽기 (저장된 헤더 위치 사용)
+                # 1. Read File
                 header_idx = selected_map['header_row_idx']
                 if uploaded_file.name.endswith('.csv'):
                     df = pd.read_csv(uploaded_file, header=header_idx)
                 else:
                     df = pd.read_excel(uploaded_file, header=header_idx, engine='openpyxl')
                 
-                # 2. 매핑 정보로 데이터 변환
+                # 2. Filter by Job Number (Multi-job sheet support)
                 mapping = selected_map['mapping_data']
+                job_col_map = mapping.get("job_num")
                 
-                # (1) Labor 변환
-                if mapping.get("crew_name") != "(선택 안 함)":
+                # If a Job Number column is mapped, filter the dataframe
+                if job_col_map and job_col_map != "(Not Selected)" and job_col_map in df.columns:
+                    # Convert to string for safe comparison
+                    df[job_col_map] = df[job_col_map].astype(str).str.strip()
+                    original_count = len(df)
+                    
+                    # Keep rows where Job # matches the selected job
+                    df = df[df[job_col_map] == str(selected_job_num)]
+                    filtered_count = len(df)
+                    
+                    if filtered_count < original_count:
+                        st.info(f"ℹ️ Filtered data: Found {filtered_count} rows matching Job '{selected_job_num}' (out of {original_count}).")
+                
+                # 3. Transform Data
+                
+                # (1) Labor Transformation
+                if mapping.get("crew_name") != "(Not Selected)":
                     new_labor = pd.DataFrame()
-                    # 컬럼이 실제 엑셀에 있는지 확인
                     if mapping["crew_name"] in df.columns:
                         new_labor["Crew Name"] = df[mapping["crew_name"]]
                         
                         # Trade
-                        if mapping.get("trade") != "(선택 안 함)" and mapping["trade"] in df.columns:
+                        if mapping.get("trade") != "(Not Selected)" and mapping["trade"] in df.columns:
                             new_labor["Trade"] = df[mapping["trade"]]
                         else:
-                            new_labor["Trade"] = "Laborer" # 기본값
+                            new_labor["Trade"] = "Laborer"
                             
                         # Hours
-                        if mapping.get("reg_hrs") != "(선택 안 함)" and mapping["reg_hrs"] in df.columns:
+                        if mapping.get("reg_hrs") != "(Not Selected)" and mapping["reg_hrs"] in df.columns:
                             new_labor["Reg Hrs"] = pd.to_numeric(df[mapping["reg_hrs"]], errors='coerce').fillna(0)
                         else: new_labor["Reg Hrs"] = 0
                         
-                        if mapping.get("ot_hrs") != "(선택 안 함)" and mapping["ot_hrs"] in df.columns:
+                        if mapping.get("ot_hrs") != "(Not Selected)" and mapping["ot_hrs"] in df.columns:
                             new_labor["OT Hrs"] = pd.to_numeric(df[mapping["ot_hrs"]], errors='coerce').fillna(0)
                         else: new_labor["OT Hrs"] = 0
                         
                         new_labor["Subsistence"] = False
                         
-                        # 빈 행 제거 및 적용
+                        # Remove empty rows
                         new_labor = new_labor[new_labor["Crew Name"].notna()]
                         st.session_state.labour_df = new_labor
                 
-                # (2) Equipment 변환
-                if mapping.get("unit_num") != "(선택 안 함)":
+                # (2) Equipment Transformation
+                if mapping.get("unit_num") != "(Not Selected)":
                     new_equip = pd.DataFrame()
                     if mapping["unit_num"] in df.columns:
                         new_equip["Unit #"] = df[mapping["unit_num"]]
                         
-                        if mapping.get("eq_name") != "(선택 안 함)" and mapping["eq_name"] in df.columns:
+                        if mapping.get("eq_name") != "(Not Selected)" and mapping["eq_name"] in df.columns:
                             new_equip["Equipment Name"] = df[mapping["eq_name"]]
                         else: new_equip["Equipment Name"] = "Equipment"
                         
-                        if mapping.get("usage_hrs") != "(선택 안 함)" and mapping["usage_hrs"] in df.columns:
+                        if mapping.get("usage_hrs") != "(Not Selected)" and mapping["usage_hrs"] in df.columns:
                             new_equip["Usage Hrs"] = pd.to_numeric(df[mapping["usage_hrs"]], errors='coerce').fillna(0)
                         else: new_equip["Usage Hrs"] = 0
                         
                         new_equip = new_equip[new_equip["Unit #"].notna()]
                         st.session_state.equip_df = new_equip
 
-                st.success("✅ 데이터가 아래 입력폼에 채워졌습니다! 내용을 검토하고 Submit 하세요.")
+                st.success("✅ Data applied below!")
                 st.rerun()
                 
             except Exception as e:
-                st.error(f"데이터 처리 실패: {e}")
+                st.error(f"Data processing failed: {e}")
 
 
 # ==========================================
-# [공통] 입력 폼 (검토 및 수정)
+# [Common] Data Review Section
 # ==========================================
 st.divider()
+st.subheader("2️⃣ Review & Submit")
 
-with st.form("ticket_form", clear_on_submit=False):
-    st.subheader("📝 티켓 내용 검토 및 저장 (Ticket Review)")
-    
-    # 1. 헤더 (Job, Date 등)
-    c1, c2, c3, c4 = st.columns(4)
-    with c1: selected_job_num = st.selectbox("Job #", job_list)
-    with c2: ticket_date = st.date_input("Ticket Date", datetime.now())
-    with c3: ticket_number = st.text_input("Ticket #", placeholder="FT-260225-01")
-    with c4: billing_type = st.selectbox("Billing", ["T&M", "Lump Sum", "Unit Price"])
+# Data Editors
+st.markdown("##### 👷‍♂️ Labor")
+edited_labour = st.data_editor(st.session_state.labour_df, num_rows="dynamic", use_container_width=True, key="ed_labour")
 
-    cc1, cc2, cc3 = st.columns(3)
-    with cc1: afe = st.text_input("AFE #")
-    with cc2: po = st.text_input("PO #")
-    with cc3: desc = st.text_input("Description")
+st.markdown("##### 🚜 Equipment")
+edited_equip = st.data_editor(st.session_state.equip_df, num_rows="dynamic", use_container_width=True, key="ed_equip")
 
-    st.divider()
+st.markdown("##### 📦 Material / Misc")
+edited_misc = st.data_editor(st.session_state.misc_df, num_rows="dynamic", use_container_width=True, key="ed_misc")
 
-    # 2. 데이터 에디터
-    st.markdown("##### 👷‍♂️ 인력 (Labour)")
-    edited_labour = st.data_editor(st.session_state.labour_df, num_rows="dynamic", use_container_width=True, key="ed_labour")
+# Submit Button
+submit_btn = st.button("✅ Final Submit", type="primary", use_container_width=True)
 
-    st.markdown("##### 🚜 장비 (Equipment)")
-    edited_equip = st.data_editor(st.session_state.equip_df, num_rows="dynamic", use_container_width=True, key="ed_equip")
-    
-    st.markdown("##### 📦 자재/기타 (Material)")
-    edited_misc = st.data_editor(st.session_state.misc_df, num_rows="dynamic", use_container_width=True, key="ed_misc")
+if submit_btn:
+    if not ticket_number:
+        st.error("Ticket # is required!")
+    else:
+        try:
+            # Save Header
+            header_data = {
+                "ticket_number": ticket_number, "job_number": selected_job_num,
+                "ticket_date": str(ticket_date), "afe_number": afe, "po_number": po,
+                "work_description": desc, "status": "Ticket Created"
+            }
+            supabase.table("field_tickets").insert(header_data).execute()
 
-    # 3. 저장 버튼
-    submit_btn = st.form_submit_button("✅ 최종 저장 (Final Submit)", type="primary", use_container_width=True)
+            # Save Labor
+            labor_data = []
+            for _, row in edited_labour.iterrows():
+                if row.get("Crew Name"):
+                    labor_data.append({
+                        "ticket_number": ticket_number, "crew_name": row["Crew Name"],
+                        "trade": row.get("Trade"), "regular_hours": row.get("Reg Hrs"),
+                        "overtime_hours": row.get("OT Hrs"), "subsistence": row.get("Subsistence")
+                    })
+            if labor_data: supabase.table("field_labor").insert(labor_data).execute()
 
-    if submit_btn:
-        if not ticket_number:
-            st.error("티켓 번호(Ticket #)는 필수입니다!")
-        else:
-            try:
-                # 헤더 저장
-                header_data = {
-                    "ticket_number": ticket_number, "job_number": selected_job_num,
-                    "ticket_date": str(ticket_date), "afe_number": afe, "po_number": po,
-                    "work_description": desc, "status": "Ticket Created"
-                }
-                supabase.table("field_tickets").insert(header_data).execute()
+            # Save Equipment
+            equip_data = []
+            for _, row in edited_equip.iterrows():
+                if row.get("Unit #"):
+                    equip_data.append({
+                        "ticket_number": ticket_number, "unit_number": row["Unit #"],
+                        "equipment_name": row.get("Equipment Name"), "usage_hours": row.get("Usage Hrs")
+                    })
+            if equip_data: supabase.table("field_equipment").insert(equip_data).execute()
 
-                # Labor 저장
-                labor_data = []
-                for _, row in edited_labour.iterrows():
-                    if row.get("Crew Name"):
-                        labor_data.append({
-                            "ticket_number": ticket_number, "crew_name": row["Crew Name"],
-                            "trade": row.get("Trade"), "regular_hours": row.get("Reg Hrs"),
-                            "overtime_hours": row.get("OT Hrs"), "subsistence": row.get("Subsistence")
-                        })
-                if labor_data: supabase.table("field_labor").insert(labor_data).execute()
+            st.success(f"🎉 Ticket [{ticket_number}] saved successfully!")
+            
+            # Reset Session
+            st.session_state.labour_df = pd.DataFrame(columns=["Crew Name", "Trade", "Reg Hrs", "OT Hrs", "Travel Hrs", "Subsistence"])
+            st.session_state.equip_df = pd.DataFrame(columns=["Unit #", "Equipment Name", "Operator", "Usage Hrs"])
+            st.rerun()
 
-                # Equipment 저장
-                equip_data = []
-                for _, row in edited_equip.iterrows():
-                    if row.get("Unit #"):
-                        equip_data.append({
-                            "ticket_number": ticket_number, "unit_number": row["Unit #"],
-                            "equipment_name": row.get("Equipment Name"), "usage_hours": row.get("Usage Hrs")
-                        })
-                if equip_data: supabase.table("field_equipment").insert(equip_data).execute()
-
-                st.success(f"🎉 티켓 [{ticket_number}] 저장이 완료되었습니다!")
-                
-                # 초기화
-                st.session_state.labour_df = pd.DataFrame(columns=["Crew Name", "Trade", "Reg Hrs", "OT Hrs", "Travel Hrs", "Subsistence"])
-                st.session_state.equip_df = pd.DataFrame(columns=["Unit #", "Equipment Name", "Operator", "Usage Hrs"])
-                st.rerun()
-
-            except Exception as e:
-                st.error(f"저장 중 오류 발생: {e}")
+        except Exception as e:
+            st.error(f"Error saving ticket: {e}")
