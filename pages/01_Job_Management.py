@@ -6,6 +6,16 @@ from datetime import datetime
 st.set_page_config(page_title="Job Management", layout="wide")
 st.title("📂 Job (프로젝트) 관리")
 
+# --- DB에서 고객사 목록 가져오기 함수 ---
+def get_client_list():
+    try:
+        response = supabase.table("master_client").select("client_name").execute()
+        return [item['client_name'] for item in response.data] if response.data else []
+    except:
+        return []
+
+client_options = get_client_list()
+
 # --- 1. Job 등록 폼 ---
 with st.expander("➕ 새로운 Job 등록하기", expanded=True):
     with st.form("project_form"):
@@ -13,7 +23,14 @@ with st.expander("➕ 새로운 Job 등록하기", expanded=True):
         
         with col1:
             job_number = st.text_input("Job Number (필수)", placeholder="예: 25-001")
-            client_name = st.text_input("Client Name", placeholder="예: Shell Canada")
+            
+            # 텍스트 입력 -> 드롭다운 선택
+            if client_options:
+                client_name = st.selectbox("Client Name", client_options)
+            else:
+                client_name = st.text_input("Client Name (직접 입력)", placeholder="고객사를 먼저 등록하세요!")
+                st.caption("Tip: 'Client Master' 메뉴에서 고객사를 등록하면 선택할 수 있습니다.")
+
             assigned_pm = st.text_input("Project Manager", placeholder="담당 PM 이름")
             
         with col2:
@@ -28,6 +45,7 @@ with st.expander("➕ 새로운 Job 등록하기", expanded=True):
 
         submitted = st.form_submit_button("Job 저장하기", use_container_width=True)
 
+        # ▼▼▼ [이 부분이 추가되었습니다!] 저장 로직 ▼▼▼
         if submitted:
             if not job_number:
                 st.error("⚠️ Job Number는 필수 항목입니다!")
@@ -51,7 +69,8 @@ with st.expander("➕ 새로운 Job 등록하기", expanded=True):
                     supabase.table("master_project").insert(new_project).execute()
                     
                     st.success(f"✅ Job [{job_number}] 등록 완료!")
-                    # 페이지 새로고침은 사용자가 원할 때 하도록 둡니다.
+                    # 저장 후 바로 리스트가 갱신되길 원하면 아래 주석을 푸세요
+                    # st.rerun()
                 except Exception as e:
                     st.error(f"저장 중 오류 발생: {e}")
 
