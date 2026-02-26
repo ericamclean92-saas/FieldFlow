@@ -11,5 +11,25 @@ def require_login():
     if "user" not in st.session_state or st.session_state.user is None:
         st.warning("🔒 Please log in to access this page.")
         time.sleep(1)
-        st.switch_page("Home.py") # 바로 로그인 화면으로 쫓아냄
+        
+        try:
+            # 1. Home.py로 이동 시도
+            st.switch_page("Home.py")
+        except Exception:
+            # 2. 만약 파일명이 달라서 이동 실패하면 수동 링크 제공
+            # (Streamlit Cloud에서는 메인 페이지 경로가 '/' 입니다)
+            st.error("⚠️ Redirect failed. Please click the link below.")
+            st.markdown(
+                """<a href="/" target="_self" style="
+                    display: inline-block;
+                    padding: 0.5em 1em;
+                    color: white;
+                    background-color: #ff4b4b;
+                    border-radius: 5px;
+                    text-decoration: none;">
+                    🏠 Go to Login Page
+                </a>""", 
+                unsafe_allow_html=True
+            )
+        
         st.stop() # 밑에 코드 실행 중지
